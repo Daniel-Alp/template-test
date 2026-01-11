@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "value.h"
 
 template <typename T, typename U>
 constexpr bool is_same = false;
@@ -10,7 +11,7 @@ template <typename>
 constexpr bool is_foreign_fn = false;
 
 template <typename R, typename... Args>
-constexpr bool is_foreign_fn<R (*)(Args...)> = is_same<R, int> && (is_same<Args, int> && ...);
+constexpr bool is_foreign_fn<R (*)(Args...)> = is_same<R, InterpResult> && (is_same<Args, Value> && ...);
 
 template <typename>
 struct FunctionArity;
@@ -20,24 +21,33 @@ struct FunctionArity<R (*)(Args...)> {
     static constexpr int value = sizeof...(Args);
 };
 
-typedef int (*ForeignFnWrapper)(int *);
+template <int ...I>
+struct IdxSeq {};
+
+template <int N, int ...I>
+struct MakeIdxSeq : MakeIdxSeq<N-1, N-1, I...> {};
+
+template <int ...I>
+struct MakeIdxSeq<0, I...> {
+    using type = IdxSeq<I...>;
+};
+
+typedef InterpResult (*ForeignFnWrapper)(Value *);
+
+template <auto F, int ...I>
+InterpResult foreign_fn_call(Value *vals, IdxSeq<I...>)
+{
+    return F(vals[I]...);
+}
 
 template <auto F>
-int foreign_fn_wrapper(int *vals)
+InterpResult foreign_fn_wrapper(Value *vals)
 {
     if constexpr (!is_foreign_fn<decltype(F)>) {
-        static_assert(false, "expected foreign function");
+        static_assert(false, "expected foreign function");        
     } else {
         constexpr int N = FunctionArity<decltype(F)>::value;
-        static_assert(N <= 3, "foreign function take 3 arguments max");
-        if constexpr (N == 0)
-            return F();
-        if constexpr (N == 1)
-            return F(vals[0]);
-        if constexpr (N == 2)
-            return F(vals[0], vals[1]);
-        if constexpr (N == 3)
-            return F(vals[0], vals[1], vals[2]);
+        return foreign_fn_call<F>(vals, typename MakeIdxSeq<N>::type{});
     }
 }
 
@@ -47,29 +57,21 @@ ForeignFnWrapper make_foreign_fn()
     return foreign_fn_wrapper<F>;
 }
 
-int fn(int a, int b)
+InterpResult fn1(Value a, Value b, Value c, Value d, Value e)
 {
-    return a + b;
-}
-
-float fn2(int a, int b)
-{
-    return 1.0;
-}
-
-int fn3(int a, float b)
-{
-    return 1;
+    double f = AS_NUM(a) + AS_NUM(b) + AS_NUM(c) + AS_NUM(d);
+    return InterpResult{.tag=INTERP_OK, .val = MK_NUM(f)};
 }
 
 int main(void)
 {
-    ForeignFnWrapper f_fn = make_foreign_fn<fn>();
-    int vals[2];
-    vals[0] = 20;
-    vals[1] = 42;
-    printf("%d\n", f_fn(vals));
+    static_assert(is_foreign_fn<decltype(&fn1)> == true, "");
 
+    ForeignFnWrapper f_fn = make_foreign_fn<fn1>();
+    Value vals[2];
+    vals[0] = MK_NUM(20);
+    vals[1] = MK_NUM(42);
+    printf("%f\n", f_fn(vals).val.as.number);
     // comment out to compile
     // make_foreign_fn<fn2>();
     // make_foreign_fn<fn3>();
