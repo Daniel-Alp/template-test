@@ -11,7 +11,9 @@ template <typename>
 constexpr bool is_foreign_fn = false;
 
 template <typename R, typename... Args>
-constexpr bool is_foreign_fn<R (*)(Args...)> = is_same<R, InterpResult> && (is_same<Args, Value> && ...);
+constexpr bool is_foreign_fn<R (*)(Args...)> 
+    = is_same<R, InterpResult> 
+        && ((is_same<Args, double> || is_same<Args, bool>) && ...);
 
 template <typename>
 struct FunctionArity;
@@ -34,10 +36,29 @@ struct MakeIdxSeq<0, I...> {
 
 typedef InterpResult (*ForeignFnWrapper)(Value *);
 
-template <auto F, int ...I>
-InterpResult foreign_fn_call(Value *vals, IdxSeq<I...>)
+template <typename T>
+T convert(Value val);
+
+template <>
+double convert(Value val)
 {
-    return F(vals[I]...);
+    if (val.tag == VAL_NUM)
+        return AS_NUM(val);
+    throw "error";
+}
+
+template <>
+bool convert(Value val)
+{
+    if (val.tag == VAL_BOOL)
+        return AS_BOOL(val);
+    throw "error";
+}
+
+template <auto F, typename ...Args, int ...I>
+InterpResult foreign_fn_call(Value *vals, InterpResult(*f)(Args...), IdxSeq<I...>)
+{
+    return F(convert<Args>(vals[I])...);
 }
 
 template <auto F>
@@ -47,7 +68,12 @@ InterpResult foreign_fn_wrapper(Value *vals)
         static_assert(false, "expected foreign function");        
     } else {
         constexpr int N = FunctionArity<decltype(F)>::value;
-        return foreign_fn_call<F>(vals, typename MakeIdxSeq<N>::type{});
+        using Idxs = typename MakeIdxSeq<N>::type;
+        try {
+            return foreign_fn_call<F>(vals, F, Idxs{});
+        } catch (const char *msg) {
+            return InterpResult{.tag=INTERP_ERR, .message=msg};
+        }
     }
 }
 
@@ -57,21 +83,43 @@ ForeignFnWrapper make_foreign_fn()
     return foreign_fn_wrapper<F>;
 }
 
-InterpResult fn1(Value a, Value b, Value c, Value d, Value e)
+InterpResult fn1(double a, double b)
 {
-    double f = AS_NUM(a) + AS_NUM(b) + AS_NUM(c) + AS_NUM(d);
-    return InterpResult{.tag=INTERP_OK, .val = MK_NUM(f)};
+    double c = a + b;
+    return InterpResult{.tag=INTERP_OK, .val = MK_NUM(c)};
+}
+
+InterpResult fn2(double a, double b, bool c)
+{
+    double d = c ? a : b;
+    return InterpResult{.tag=INTERP_OK, .val = MK_NUM(d)};
 }
 
 int main(void)
 {
-    static_assert(is_foreign_fn<decltype(&fn1)> == true, "");
-
     ForeignFnWrapper f_fn = make_foreign_fn<fn1>();
     Value vals[2];
-    vals[0] = MK_NUM(20);
+    vals[0] = MK_NUM(20); // change to MK_NULL and you will get an INTERP_ERR
     vals[1] = MK_NUM(42);
-    printf("%f\n", f_fn(vals).val.as.number);
+    InterpResult res = f_fn(vals);
+    if (res.tag == INTERP_ERR) {
+        printf("%s\n", res.message);
+    } else {
+        printf("%f\n", AS_NUM(res.val));
+    }
+
+    ForeignFnWrapper f_fn2 = make_foreign_fn<fn2>();
+    Value vals2[3];
+    vals2[0] = MK_NUM(100);
+    vals2[1] = MK_NUM(200);
+    vals2[2] = MK_BOOL(true); // try changing to false
+    InterpResult res2 = f_fn2(vals2);
+    if (res2.tag == INTERP_ERR) {
+        printf("%s\n", res2.message);
+    } else {
+        printf("%f\n", AS_NUM(res2.val));
+    }
+
     // comment out to compile
     // make_foreign_fn<fn2>();
     // make_foreign_fn<fn3>();
