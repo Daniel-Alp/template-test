@@ -65,9 +65,14 @@ Value convert_to(bool val)
 }
 
 template <auto F, typename R, typename... Args, int... I>
-R foreign_fn_call(Value *vals, R (*)(Args...), IdxSeq<I...>)
+Value foreign_fn_call(Value *vals, R (*)(Args...), IdxSeq<I...>)
 {
-    return F(convert_from<Args>(vals[I])...);
+    if constexpr (is_same<R, void>) {
+        F(convert_from<Args>(vals[I])...);
+        return MK_NULL;
+    } else {
+        return convert_to(F(convert_from<Args>(vals[I])...));
+    }
 }
 
 template <auto F>
@@ -77,7 +82,7 @@ InterpResult wrap_foreign_fn(Value *vals)
     constexpr int N = FunctionArity<decltype(F)>::value;
     using Idxs = typename MakeIdxSeq<N>::type;
     try {
-        return InterpResult{.tag = INTERP_OK, .val = convert_to(foreign_fn_call<F>(vals, F, Idxs{}))};
+        return InterpResult{.tag = INTERP_OK, .val = foreign_fn_call<F>(vals, F, Idxs{})};
     } catch (const char *message) {
         return InterpResult{.tag = INTERP_ERR, .message = message};
     }
