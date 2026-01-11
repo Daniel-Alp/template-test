@@ -1,5 +1,5 @@
-#include <stdio.h>
 #include "value.h"
+#include <stdio.h>
 
 template <typename T, typename U>
 constexpr bool is_same = false;
@@ -11,9 +11,8 @@ template <typename>
 constexpr bool is_foreign_fn = false;
 
 template <typename R, typename... Args>
-constexpr bool is_foreign_fn<R (*)(Args...)> 
-    = is_same<R, InterpResult> 
-        && ((is_same<Args, double> || is_same<Args, bool>) && ...);
+constexpr bool is_foreign_fn<R (*)(Args...)> =
+    is_same<R, InterpResult> && ((is_same<Args, double> || is_same<Args, bool>) && ...);
 
 template <typename>
 struct FunctionArity;
@@ -23,13 +22,13 @@ struct FunctionArity<R (*)(Args...)> {
     static constexpr int value = sizeof...(Args);
 };
 
-template <int ...I>
+template <int... I>
 struct IdxSeq {};
 
-template <int N, int ...I>
-struct MakeIdxSeq : MakeIdxSeq<N-1, N-1, I...> {};
+template <int N, int... I>
+struct MakeIdxSeq : MakeIdxSeq<N - 1, N - 1, I...> {};
 
-template <int ...I>
+template <int... I>
 struct MakeIdxSeq<0, I...> {
     using type = IdxSeq<I...>;
 };
@@ -55,52 +54,47 @@ bool convert(Value val)
     throw "error";
 }
 
-template <auto F, typename ...Args, int ...I>
-InterpResult foreign_fn_call(Value *vals, InterpResult(*f)(Args...), IdxSeq<I...>)
+template <auto F, typename... Args, int... I>
+InterpResult foreign_fn_call(Value *vals, InterpResult (*f)(Args...), IdxSeq<I...>)
 {
     return F(convert<Args>(vals[I])...);
 }
 
 template <auto F>
-InterpResult foreign_fn_wrapper(Value *vals)
+    requires is_foreign_fn<decltype(F)>
+InterpResult wrap_foreign_fn(Value *vals)
 {
-    if constexpr (!is_foreign_fn<decltype(F)>) {
-        static_assert(false, "expected foreign function");        
-    } else {
-        constexpr int N = FunctionArity<decltype(F)>::value;
-        using Idxs = typename MakeIdxSeq<N>::type;
-        try {
-            return foreign_fn_call<F>(vals, F, Idxs{});
-        } catch (const char *msg) {
-            return InterpResult{.tag=INTERP_ERR, .message=msg};
-        }
+    constexpr int N = FunctionArity<decltype(F)>::value;
+    using Idxs = typename MakeIdxSeq<N>::type;
+    try {
+        return foreign_fn_call<F>(vals, F, Idxs{});
+    } catch (const char *message) {
+        return InterpResult{.tag = INTERP_ERR, .message = message};
     }
-}
-
-template <auto F>
-ForeignFnWrapper make_foreign_fn()
-{
-    return foreign_fn_wrapper<F>;
 }
 
 InterpResult fn1(double a, double b)
 {
     double c = a + b;
-    return InterpResult{.tag=INTERP_OK, .val = MK_NUM(c)};
+    return InterpResult{.tag = INTERP_OK, .val = MK_NUM(c)};
 }
 
 InterpResult fn2(double a, double b, bool c)
 {
     double d = c ? a : b;
-    return InterpResult{.tag=INTERP_OK, .val = MK_NUM(d)};
+    return InterpResult{.tag = INTERP_OK, .val = MK_NUM(d)};
+}
+
+// cannot wrap into a foreign function, see below
+InterpResult fn3_fail(int a, int b)
+{
+    return InterpResult{.tag = INTERP_OK, .val = MK_NUM(double(a + b))};
 }
 
 int main(void)
 {
-    ForeignFnWrapper f_fn = make_foreign_fn<fn1>();
-    Value vals[2];
-    vals[0] = MK_NUM(20); // change to MK_NULL and you will get an INTERP_ERR
-    vals[1] = MK_NUM(42);
+    ForeignFnWrapper f_fn = wrap_foreign_fn<fn1>;
+    Value vals[2] = {MK_NUM(20), MK_NUM(42)}; // change arguments to MK_BOOL or MK_NULL and you get runtime error
     InterpResult res = f_fn(vals);
     if (res.tag == INTERP_ERR) {
         printf("%s\n", res.message);
@@ -108,21 +102,17 @@ int main(void)
         printf("%f\n", AS_NUM(res.val));
     }
 
-    ForeignFnWrapper f_fn2 = make_foreign_fn<fn2>();
-    Value vals2[3];
-    vals2[0] = MK_NUM(100);
-    vals2[1] = MK_NUM(200);
-    vals2[2] = MK_BOOL(true); // try changing to false
-    InterpResult res2 = f_fn2(vals2);
-    if (res2.tag == INTERP_ERR) {
-        printf("%s\n", res2.message);
-    } else {
-        printf("%f\n", AS_NUM(res2.val));
-    }
+    // ForeignFnWrapper f_fn2 = wrap_foreign_fn<fn2>;
+    // Value vals2[3] = {MK_NUM(100), MK_NUM(200), MK_BOOL(false)};
+    // InterpResult res2 = f_fn2(vals2);
+    // if (res2.tag == INTERP_ERR) {
+    //     printf("%s\n", res2.message);
+    // } else {
+    //     printf("%f\n", AS_NUM(res2.val));
+    // }
 
-    // comment out to compile
-    // make_foreign_fn<fn2>();
-    // make_foreign_fn<fn3>();
-    // make_foreign_fn<3>();
-    // make_foreign_fn();
+    // uncomment to get compile error
+    // ForeignFnWrapper _ = wrap_foreign_fn<fn3_fail>;
+    // ForeignFnWrapper _ = wrap_foreign_fn<3>;
+    // ForeignFnWrapper _ = wrap_foreign_fn;
 }
